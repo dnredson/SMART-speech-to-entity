@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smart-irrigation-api"
-version = "0.4.0"
+version = "0.5.0"
 description = "API independente de registro e speech-to-entity do SMART Irrigação."
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.116,<1",
+  "firebase-admin>=6.5,<8",
   "openai>=3.8,<4",
-  "psycopg[binary]>=3.2,<4",
   "python-dotenv>=1.1,<2",
   "python-multipart>=0.0.20,<1",
   "sqlalchemy>=2.0,<3",
