@@ -3,6 +3,7 @@
 Módulo independente para registro de irrigação/fertirrigação do projeto SMART, mantendo a stack do portal de referência: **React + TypeScript + Vite** no frontend e **Python 3.12 + FastAPI** no backend.
 
 A V0.3 fecha a primeira versão do fluxo **speech-to-entity** com OpenAI e reforça a regra principal de autoridade: a IA interpreta linguagem; o backend SMART decide se o registro está completo.
+<img width="401" height="786" alt="image" src="https://github.com/user-attachments/assets/d1f949f0-7947-4e2f-954e-5bd5bcf61843" />
 
 ## Pipeline
 
