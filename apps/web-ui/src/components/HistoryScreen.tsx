@@ -33,12 +33,26 @@ function productLabel(event: IrrigationEvent): string | null {
   }).join(" | ");
 }
 
+function queueLabel(record: LocalVoiceRecord): string {
+  if (record.status === "UPLOADING") return "Enviando áudio…";
+  if (record.status === "PROCESSING") return "Processando registro…";
+  if (record.status === "ERROR") return "Falha no processamento. O áudio continua salvo neste dispositivo.";
+  if (record.status === "NEEDS_REVIEW") return "O registro precisa ser tentado novamente ou descartado.";
+  return "Aguardando processamento/sincronização";
+}
+
 export function HistoryScreen({
   events,
   localQueue,
+  online,
+  onRetry,
+  onDiscard,
 }: {
   events: IrrigationEvent[];
   localQueue: LocalVoiceRecord[];
+  online: boolean;
+  onRetry: (record: LocalVoiceRecord) => Promise<void>;
+  onDiscard: (record: LocalVoiceRecord) => Promise<void>;
 }) {
   const [sector, setSector] = useState<number | "ALL">("ALL");
   const [operation, setOperation] = useState<OperationFilter>("ALL");
@@ -75,17 +89,39 @@ export function HistoryScreen({
             <span className="pending-count">{localQueue.length}</span>
           </div>
           <div className="history-list">
-            {localQueue.map((record) => (
-              <article className="history-item" key={record.id}>
-                <div className="history-icon leaf" aria-hidden="true">●</div>
-                <div className="history-copy">
-                  <strong>{record.quick ? "Registro rápido por voz" : `Setor ${record.sectorId ?? "--"}`}</strong>
-                  <span>Aguardando processamento/sincronização</span>
-                  {record.lastError && <small className="history-missing">{record.lastError}</small>}
-                </div>
-                <StatusBadge status={record.status} />
-              </article>
-            ))}
+            {localQueue.map((record) => {
+              const busy = record.status === "UPLOADING" || record.status === "PROCESSING";
+              return (
+                <article className="history-item pending-history-item" key={record.id}>
+                  <div className="history-icon leaf" aria-hidden="true">●</div>
+                  <div className="history-copy">
+                    <strong>{record.quick ? "Registro rápido por voz" : `Setor ${record.sectorId ?? "--"}`}</strong>
+                    <span>{queueLabel(record)}</span>
+                    {record.lastError && <small className="history-missing">{record.lastError}</small>}
+                    <div className="queue-actions">
+                      <button
+                        type="button"
+                        className="queue-action retry"
+                        disabled={!online || busy}
+                        onClick={() => void onRetry(record)}
+                      >
+                        {busy ? "Processando…" : "Tentar novamente"}
+                      </button>
+                      <button
+                        type="button"
+                        className="queue-action discard"
+                        disabled={busy}
+                        onClick={() => void onDiscard(record)}
+                      >
+                        Descartar
+                      </button>
+                    </div>
+                    {!online && <small className="queue-offline-note">Conecte-se à internet para tentar novamente.</small>}
+                  </div>
+                  <StatusBadge status={record.status} />
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
