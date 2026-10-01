@@ -2,32 +2,35 @@
 
 Atualizado em: 2026-10-01.
 
-## Opção gratuita recomendada para testes
-
-Para manter a arquitetura atual com o mínimo de mudanças:
+## Arquitetura recomendada para o piloto
 
 ```text
-Frontend React/PWA  -> Cloudflare Pages (ou Render Static Site)
-Backend FastAPI     -> Render Free Web Service
-Banco PostgreSQL    -> Neon Free
-OpenAI              -> API key somente no backend
+Frontend React/PWA  -> Firebase Hosting ou Cloudflare Pages
+Backend FastAPI     -> servidor próprio, Render ou Cloud Run
+Eventos/histórico   -> Cloud Firestore
+Áudios originais    -> Cloud Storage for Firebase
+OpenAI              -> chave somente no backend
 ```
 
-### Por que não usar SQLite no Render Free?
+Projeto Firebase usado pela V0.5:
 
-O backend usa SQLite por padrão quando `DATABASE_URL` não é definido. Isso é adequado em desenvolvimento local ou em servidor com disco persistente.
+```text
+Project ID: smart-app-b807a
+Storage: smart-app-b807a.firebasestorage.app
+Firestore events: irrigation_events
+```
 
-Em serviços gratuitos com filesystem efêmero, como o Render Free, o arquivo SQLite pode desaparecer após restart, redeploy ou spin-down. Para hospedagem gratuita, configure um PostgreSQL externo.
+## Credenciais no backend
 
-A API já aceita `DATABASE_URL` via SQLAlchemy. Exemplo:
+O Firebase Admin SDK usa Application Default Credentials. Fora do Google Cloud, configure:
 
 ```env
-DATABASE_URL=postgresql+psycopg://usuario:senha@host/database?sslmode=require
+GOOGLE_APPLICATION_CREDENTIALS=/caminho/seguro/firebase-service-account.json
 ```
 
-O driver `psycopg` já faz parte das dependências da V0.4.
+Nunca coloque o JSON real da service account no Git. O repositório ignora `secrets/`, `firebase-service-account.json` e variantes de nome de service account.
 
-## Variáveis mínimas do backend
+## Variáveis mínimas
 
 ```env
 OPENAI_API_KEY=sk-proj-...
@@ -35,30 +38,60 @@ OPENAI_TEXT_MODEL=gpt-6-luna
 OPENAI_TRANSCRIBE_MODEL=gpt-transcribe
 ENTITY_EXTRACTOR=openai
 STT_PROVIDER=openai
-DATABASE_URL=postgresql+psycopg://...
+
+PERSISTENCE_PROVIDER=firebase
+FIREBASE_PROJECT_ID=smart-app-b807a
+FIREBASE_STORAGE_BUCKET=smart-app-b807a.firebasestorage.app
+FIRESTORE_EVENTS_COLLECTION=irrigation_events
+FIRESTORE_USAGE_COLLECTION=openai_usage
+FIREBASE_AUDIO_PREFIX=irrigation-audio
+GOOGLE_APPLICATION_CREDENTIALS=/caminho/seguro/firebase-service-account.json
+
 CORS_ORIGINS=https://SEU-FRONTEND.example
 ```
 
-Nunca coloque `OPENAI_API_KEY` no frontend ou em arquivo versionado.
+## Persistência
 
-## Observações para o piloto
-
-- O microfone no navegador remoto precisa de HTTPS.
-- Render Free pode entrar em spin-down quando fica sem tráfego; a primeira chamada depois disso pode levar mais tempo.
-- O áudio gravado offline fica temporariamente no IndexedDB do navegador até a sincronização.
-- Os eventos e o histórico ficam no banco configurado em `DATABASE_URL`.
-- Sem `DATABASE_URL`, eventos e histórico ficam no SQLite local `./data/smart-irrigation.db`.
-
-## Firebase
-
-A V0.4 não usa Firebase/Firestore. O Firebase usado em experimentos anteriores do projeto não está conectado a este serviço web.
-
-Persistência atual:
+O fluxo oficial da V0.5 é:
 
 ```text
-Browser IndexedDB -> fila offline de áudio
-Backend SQLite     -> eventos/histórico por padrão
-PostgreSQL         -> recomendado para hospedagem externa
+Browser IndexedDB -> fila offline temporária
+Firebase Storage  -> áudio original permanente
+Cloud Firestore   -> evento estruturado + transcrição + metadados do áudio
 ```
 
-Se futuramente houver motivo para padronizar o projeto inteiro em Firebase, a camada de persistência pode ser substituída, mas não é necessário para o piloto atual.
+SQLite continua disponível somente como fallback de desenvolvimento:
+
+```env
+PERSISTENCE_PROVIDER=sqlite
+```
+
+## Áudio original
+
+Em endpoints `process`, o backend salva o áudio antes de chamar a OpenAI. O caminho padrão é:
+
+```text
+irrigation-audio/YYYY/MM/<event-id>/original.<ext>
+```
+
+O objeto recebe SHA-256 e metadados de auditoria. O arquivo não é tornado público.
+
+Os endpoints `preview` continuam sem persistência e não deixam áudio no Storage.
+
+## Docker Compose
+
+Coloque a credencial em:
+
+```text
+secrets/firebase-service-account.json
+```
+
+O `docker-compose.yml` monta o arquivo somente para leitura em `/run/secrets/firebase-service-account.json`.
+
+## HTTPS
+
+O microfone em implantação remota exige contexto seguro; publique o frontend em HTTPS. Firebase Hosting e Cloudflare Pages já fornecem HTTPS automaticamente.
+
+## Firestore e Storage Rules
+
+O frontend não precisa acessar Firestore nem Storage diretamente nesta versão. O FastAPI é a autoridade de escrita e usa Firebase Admin SDK. Isso permite manter as regras de cliente fechadas e centralizar validação no backend.
