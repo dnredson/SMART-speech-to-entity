@@ -113,6 +113,24 @@ export function App() {
     }
   }, [refreshQueue]);
 
+  const retryQueueRecord = useCallback(async (record: LocalVoiceRecord) => {
+    if (!navigator.onLine) {
+      setNotice("Sem internet. O áudio continua salvo neste dispositivo.");
+      return;
+    }
+    await uploadRecord(record);
+  }, [uploadRecord]);
+
+  const discardQueueRecord = useCallback(async (record: LocalVoiceRecord) => {
+    const confirmed = window.confirm(
+      "Descartar este registro da fila deste dispositivo? O áudio local pendente será removido.",
+    );
+    if (!confirmed) return;
+    await deleteVoiceRecord(record.id);
+    await refreshQueue();
+    setNotice("Registro pendente descartado deste dispositivo.");
+  }, [refreshQueue]);
+
   const syncQueue = useCallback(async () => {
     if (!navigator.onLine) return;
     const queued = await listVoiceRecords();
@@ -215,7 +233,13 @@ export function App() {
 
       <main className="page">
         {view === "history" ? (
-          <HistoryScreen events={events} localQueue={localQueue} />
+          <HistoryScreen
+            events={events}
+            localQueue={localQueue}
+            online={online}
+            onRetry={retryQueueRecord}
+            onDiscard={discardQueueRecord}
+          />
         ) : (
           <>
             <section className="hero">
