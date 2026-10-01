@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,17 @@ from .ai import (
     extract_with_openai,
 )
 from .config import get_settings
-from .database import create_manual_event, create_voice_event, list_events, usage_summary
+from .database import (
+    create_manual_event,
+    create_voice_event,
+    list_events,
+    mark_voice_error,
+    persistence_health,
+    reserve_voice_event,
+    store_original_audio,
+    usage_summary,
+)
+from .firebase_store import FirebasePersistenceError
 from .schemas import (
     ExtractionPreviewResponse,
     IrrigationEventResponse,
@@ -32,7 +43,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="SMART Irrigação API",
-    version="0.4.0",
+    version="0.5.0",
     description="Serviço independente para registro de irrigação/fertirrigação e speech-to-entity.",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -60,21 +71,26 @@ def health() -> dict[str, object]:
     return {
         "status": "ok",
         "service": "smart-irrigation-api",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "openai_configured": settings.openai_configured,
         "entity_extractor": settings.entity_extractor,
         "stt_provider": settings.stt_provider,
         "text_model": settings.openai_text_model if settings.entity_extractor == "openai" else None,
         "transcribe_model": settings.openai_transcribe_model if settings.stt_provider == "openai" else None,
+        "persistence": persistence_health(),
     }
 
 
 @app.get("/api/v1/usage")
 def get_usage() -> dict[str, object]:
+    try:
+        month = usage_summary()
+    except FirebasePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
-        "month": usage_summary(),
+        "month": month,
         "local_call_limit": settings.max_openai_calls_per_month,
-        "note": "Contador local de chamadas concluídas; o hard spend limit continua sendo configurado na plataforma OpenAI.",
+        "note": "Contador de chamadas concluídas; o hard spend limit continua sendo configurado na plataforma OpenAI.",
     }
 
 
@@ -85,7 +101,10 @@ def sectors() -> list[dict[str, int | str]]:
 
 @app.get("/api/v1/events", response_model=list[IrrigationEventResponse])
 def events(limit: int = 200) -> list[IrrigationEventResponse]:
-    return list_events(max(1, min(limit, 500)))
+    try:
+        return list_events(max(1, min(limit, 500)))
+    except FirebasePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/events", response_model=IrrigationEventResponse, status_code=201)
@@ -103,7 +122,10 @@ def create_event(request: ManualEventRequest) -> IrrigationEventResponse:
                 status_code=422,
                 detail={"message": "Fertirrigação incompleta.", "missing_fields": missing},
             )
-    return create_manual_event(request)
+    try:
+        return create_manual_event(request)
+    except FirebasePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/transcript/preview", response_model=ExtractionPreviewResponse)
@@ -118,7 +140,7 @@ def preview_transcript(request: TranscriptProcessRequest) -> ExtractionPreviewRe
         )
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except AIUnavailableError as exc:
+    except (AIUnavailableError, FirebasePersistenceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return ExtractionPreviewResponse(
         sector_id=request.sector_id,
@@ -142,34 +164,38 @@ def process_transcript(request: TranscriptProcessRequest) -> IrrigationEventResp
             request.operation_type,
             request.recorded_at,
         )
+        return create_voice_event(
+            event_id=request.client_record_id,
+            sector_id=request.sector_id,
+            operation_type=request.operation_type,
+            start_date=parsed.start_date,
+            start_time=parsed.start_time,
+            duration_minutes=parsed.duration_minutes,
+            products=parsed.products,
+            transcript=request.transcript,
+            missing_fields=parsed.missing_fields,
+        )
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except AIUnavailableError as exc:
+    except (AIUnavailableError, FirebasePersistenceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return create_voice_event(
-        event_id=request.client_record_id,
-        sector_id=request.sector_id,
-        operation_type=request.operation_type,
-        start_date=parsed.start_date,
-        start_time=parsed.start_time,
-        duration_minutes=parsed.duration_minutes,
-        products=parsed.products,
-        transcript=request.transcript,
-        missing_fields=parsed.missing_fields,
-    )
 
-
-async def _transcribe_upload(audio: UploadFile) -> str:
+async def _read_upload(audio: UploadFile) -> tuple[bytes, str, str, str | None]:
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=422, detail="Áudio vazio.")
     if len(content) > settings.max_audio_bytes:
         raise HTTPException(status_code=413, detail="Áudio excede o limite local de tamanho.")
+    filename = audio.filename
+    suffix = Path(filename or "recording.webm").suffix or ".webm"
+    mime_type = audio.content_type or "application/octet-stream"
+    return content, suffix, mime_type, filename
 
-    suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
+
+def _transcribe_content(content: bytes, *, suffix: str, filename: str | None) -> str:
     try:
-        return transcribe_audio(content, suffix=suffix, filename=audio.filename)
+        return transcribe_audio(content, suffix=suffix, filename=filename)
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
@@ -187,6 +213,44 @@ def _reference_time(recorded_at: str) -> datetime:
         return datetime.now().astimezone()
 
 
+def _ensure_voice_budget() -> None:
+    try:
+        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
+            ensure_openai_capacity(2)
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except FirebasePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _persist_original_before_processing(
+    *,
+    event_id: str,
+    content: bytes,
+    mime_type: str,
+    filename: str | None,
+    reference: datetime,
+):
+    try:
+        audio_meta = store_original_audio(
+            event_id=event_id,
+            content=content,
+            mime_type=mime_type,
+            original_filename=filename,
+            recorded_at=reference,
+        )
+        if audio_meta is not None:
+            reserve_voice_event(event_id=event_id, audio=audio_meta, recorded_at=reference)
+        return audio_meta
+    except FirebasePersistenceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _record_processing_error(event_id: str, exc: Exception) -> None:
+    detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+    mark_voice_error(event_id, str(detail))
+
+
 @app.post("/api/v1/voice/preview", response_model=VoicePreviewResponse)
 async def preview_voice(
     sector_id: Annotated[int, Form(ge=1, le=7)],
@@ -194,19 +258,15 @@ async def preview_voice(
     recorded_at: Annotated[str, Form()],
     audio: Annotated[UploadFile, File()],
 ) -> VoicePreviewResponse:
-    """Fluxo guiado: setor e operação já foram selecionados pela interface."""
-    try:
-        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
-            ensure_openai_capacity(2)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-
-    transcript = await _transcribe_upload(audio)
+    """Fluxo guiado de preview: não persiste áudio nem evento."""
+    _ensure_voice_budget()
+    content, suffix, _, filename = await _read_upload(audio)
+    transcript = _transcribe_content(content, suffix=suffix, filename=filename)
     try:
         parsed = extract_with_openai(transcript, operation_type, _reference_time(recorded_at))
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except AIUnavailableError as exc:
+    except (AIUnavailableError, FirebasePersistenceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return VoicePreviewResponse(
@@ -230,32 +290,46 @@ async def process_voice(
     audio: Annotated[UploadFile, File()],
     client_record_id: Annotated[str | None, Form()] = None,
 ) -> IrrigationEventResponse:
-    """Fluxo guiado: setor e operação já foram selecionados pela interface."""
-    try:
-        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
-            ensure_openai_capacity(2)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    """Fluxo guiado: salva o áudio original antes da transcrição e registra no Firestore."""
+    _ensure_voice_budget()
+    content, suffix, mime_type, filename = await _read_upload(audio)
+    reference = _reference_time(recorded_at)
+    event_id = client_record_id or str(uuid4())
+    audio_meta = _persist_original_before_processing(
+        event_id=event_id,
+        content=content,
+        mime_type=mime_type,
+        filename=filename,
+        reference=reference,
+    )
 
-    transcript = await _transcribe_upload(audio)
     try:
-        parsed = extract_with_openai(transcript, operation_type, _reference_time(recorded_at))
+        transcript = _transcribe_content(content, suffix=suffix, filename=filename)
+        parsed = extract_with_openai(transcript, operation_type, reference)
+        return create_voice_event(
+            event_id=event_id,
+            sector_id=sector_id,
+            operation_type=operation_type,
+            start_date=parsed.start_date,
+            start_time=parsed.start_time,
+            duration_minutes=parsed.duration_minutes,
+            products=parsed.products,
+            transcript=transcript,
+            missing_fields=parsed.missing_fields,
+            audio=audio_meta,
+        )
     except AILimitError as exc:
+        _record_processing_error(event_id, exc)
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
+        _record_processing_error(event_id, exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return create_voice_event(
-        event_id=client_record_id,
-        sector_id=sector_id,
-        operation_type=operation_type,
-        start_date=parsed.start_date,
-        start_time=parsed.start_time,
-        duration_minutes=parsed.duration_minutes,
-        products=parsed.products,
-        transcript=transcript,
-        missing_fields=parsed.missing_fields,
-    )
+    except FirebasePersistenceError as exc:
+        _record_processing_error(event_id, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except HTTPException as exc:
+        _record_processing_error(event_id, exc)
+        raise
 
 
 @app.post("/api/v1/voice/quick/preview", response_model=QuickVoicePreviewResponse)
@@ -263,19 +337,15 @@ async def preview_quick_voice(
     recorded_at: Annotated[str, Form()],
     audio: Annotated[UploadFile, File()],
 ) -> QuickVoicePreviewResponse:
-    """Fluxo de menor atrito: setor e tipo da operação também são extraídos da fala."""
-    try:
-        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
-            ensure_openai_capacity(2)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-
-    transcript = await _transcribe_upload(audio)
+    """Fluxo de preview sem persistência: setor e tipo também são extraídos da fala."""
+    _ensure_voice_budget()
+    content, suffix, _, filename = await _read_upload(audio)
+    transcript = _transcribe_content(content, suffix=suffix, filename=filename)
     try:
         return extract_quick_voice_with_openai(transcript, _reference_time(recorded_at))
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except AIUnavailableError as exc:
+    except (AIUnavailableError, FirebasePersistenceError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -285,45 +355,60 @@ async def process_quick_voice(
     audio: Annotated[UploadFile, File()],
     client_record_id: Annotated[str | None, Form()] = None,
 ) -> IrrigationEventResponse:
-    """Registra por uma única fala. Só exige correção manual se setor ou operação não forem identificados."""
-    try:
-        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
-            ensure_openai_capacity(2)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    """Uma única fala: o áudio original é salvo antes de STT e a entidade final vai para Firestore."""
+    _ensure_voice_budget()
+    content, suffix, mime_type, filename = await _read_upload(audio)
+    reference = _reference_time(recorded_at)
+    event_id = client_record_id or str(uuid4())
+    audio_meta = _persist_original_before_processing(
+        event_id=event_id,
+        content=content,
+        mime_type=mime_type,
+        filename=filename,
+        reference=reference,
+    )
 
-    transcript = await _transcribe_upload(audio)
     try:
-        parsed = extract_quick_voice_with_openai(transcript, _reference_time(recorded_at))
+        transcript = _transcribe_content(content, suffix=suffix, filename=filename)
+        parsed = extract_quick_voice_with_openai(transcript, reference)
+        if parsed.sector_id is None or parsed.operation_type is None:
+            exc = HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Não consegui identificar setor e/ou tipo da operação.",
+                    "missing_fields": parsed.missing_fields,
+                    "transcript": transcript,
+                },
+            )
+            _record_processing_error(event_id, exc)
+            raise exc
+
+        remaining_missing = [
+            item for item in parsed.missing_fields if item not in {"sector_id", "operation_type"}
+        ]
+        return create_voice_event(
+            event_id=event_id,
+            sector_id=parsed.sector_id,
+            operation_type=parsed.operation_type,
+            start_date=parsed.start_date,
+            start_time=parsed.start_time,
+            duration_minutes=parsed.duration_minutes,
+            products=parsed.products,
+            transcript=transcript,
+            missing_fields=remaining_missing,
+            audio=audio_meta,
+        )
     except AILimitError as exc:
+        _record_processing_error(event_id, exc)
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
+        _record_processing_error(event_id, exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    if parsed.sector_id is None or parsed.operation_type is None:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "message": "Não consegui identificar setor e/ou tipo da operação.",
-                "missing_fields": parsed.missing_fields,
-                "transcript": transcript,
-            },
-        )
-
-    remaining_missing = [
-        item for item in parsed.missing_fields if item not in {"sector_id", "operation_type"}
-    ]
-    return create_voice_event(
-        event_id=client_record_id,
-        sector_id=parsed.sector_id,
-        operation_type=parsed.operation_type,
-        start_date=parsed.start_date,
-        start_time=parsed.start_time,
-        duration_minutes=parsed.duration_minutes,
-        products=parsed.products,
-        transcript=transcript,
-        missing_fields=remaining_missing,
-    )
+    except FirebasePersistenceError as exc:
+        _record_processing_error(event_id, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except HTTPException:
+        raise
 
 
 def run() -> None:
