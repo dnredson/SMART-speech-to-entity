@@ -23,5 +23,5 @@ docker compose push
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Publicado:" -ForegroundColor Green
-Write-Host "  dnredson/smart-irrigacao-api:v0.3.0"
-Write-Host "  dnredson/smart-irrigacao-web:v0.3.0"
+Write-Host "  dnredson/smart-irrigacao-api:v0.5.0"
+Write-Host "  dnredson/smart-irrigacao-web:v0.5.0"
