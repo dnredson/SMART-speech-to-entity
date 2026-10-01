@@ -6,5 +6,5 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN uv pip install --system .
 RUN mkdir -p /app/data /root/.cache/huggingface
-EXPOSE 8030
-CMD ["uvicorn", "smart_irrigation.main:app", "--host", "0.0.0.0", "--port", "8030"]
+EXPOSE 8080
+CMD ["sh", "-c", "uvicorn smart_irrigation.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
