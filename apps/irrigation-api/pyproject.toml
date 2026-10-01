@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smart-irrigation-api"
-version = "0.3.0"
+version = "0.4.0"
 description = "API independente de registro e speech-to-entity do SMART Irrigação."
 requires-python = ">=3.12,<3.13"
 dependencies = [
