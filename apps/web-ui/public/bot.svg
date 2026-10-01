@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="128" height="128">
+  <!-- Antena / Caule do Café -->
+  <line x1="50" y1="45" x2="50" y2="20" stroke="#2c3e50" stroke-width="4" stroke-linecap="round"/>
+  
+  <!-- Folhas Minimalistas -->
+  <path d="M50,35 Q30,35 35,15 Q48,20 50,35" fill="#27ae60"/>
+  <path d="M50,28 Q70,28 65,8 Q52,13 50,28" fill="#2ecc71"/>
+  
+  <!-- Fruto do Café (Cereja) / Luz de Status do Robô -->
+  <circle cx="50" cy="18" r="6" fill="#e74c3c"/>
+
+  <!-- Cabeça do Robô -->
+  <rect x="25" y="45" width="50" height="40" rx="12" fill="#ecf0f1" stroke="#2c3e50" stroke-width="4"/>
+  
+  <!-- Olhos do Robô -->
+  <circle cx="38" cy="60" r="4.5" fill="#2c3e50"/>
+  <circle cx="62" cy="60" r="4.5" fill="#2c3e50"/>
+  
+  <!-- Sorriso / Painel Frontal -->
+  <line x1="42" y1="72" x2="58" y2="72" stroke="#2c3e50" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smart-irrigation-api"
+version = "0.3.0"
+description = "API independente de registro e speech-to-entity do SMART Irrigação."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "openai>=3.8,<4",
+  "python-dotenv>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+local-stt = ["faster-whisper>=1.2,<2"]
+
+[project.scripts]
+smart-irrigation-api = "smart_irrigation.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smart_irrigation"]
