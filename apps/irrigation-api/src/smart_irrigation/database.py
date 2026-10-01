@@ -9,7 +9,20 @@ from uuid import uuid4
 from sqlalchemy import DateTime, Integer, String, Text, create_engine, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from .schemas import FertigationProduct, IrrigationEventResponse, ManualEventRequest, OperationType
+from .config import get_settings
+from .schemas import AudioObject, FertigationProduct, IrrigationEventResponse, ManualEventRequest, OperationType
+
+settings = get_settings()
+
+
+def _using_firebase() -> bool:
+    return settings.persistence_provider == "firebase"
+
+
+def _firebase():
+    from . import firebase_store
+
+    return firebase_store
 
 
 def _default_database_url() -> str:
@@ -18,10 +31,14 @@ def _default_database_url() -> str:
     return f"sqlite:///{data_dir / 'smart-irrigation.db'}"
 
 
-DATABASE_URL = os.environ.get("DATABASE_URL", _default_database_url())
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+DATABASE_URL = os.environ.get("DATABASE_URL", _default_database_url()) if not _using_firebase() else None
+engine = (
+    create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False} if DATABASE_URL and DATABASE_URL.startswith("sqlite") else {},
+    )
+    if DATABASE_URL
+    else None
 )
 
 
@@ -58,10 +75,52 @@ class OpenAIUsageModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-Base.metadata.create_all(engine)
+if engine is not None:
+    Base.metadata.create_all(engine)
+
+
+def persistence_health() -> dict[str, object]:
+    if _using_firebase():
+        return {"provider": "firebase", **_firebase().firebase_health()}
+    return {"provider": "sqlite", "database_url": DATABASE_URL}
+
+
+def store_original_audio(
+    *,
+    event_id: str,
+    content: bytes,
+    mime_type: str,
+    original_filename: str | None,
+    recorded_at: datetime,
+) -> AudioObject | None:
+    if not _using_firebase():
+        return None
+    return _firebase().store_original_audio(
+        event_id=event_id,
+        content=content,
+        mime_type=mime_type,
+        original_filename=original_filename,
+        recorded_at=recorded_at,
+    )
+
+
+def reserve_voice_event(*, event_id: str, audio: AudioObject, recorded_at: datetime) -> None:
+    if not _using_firebase():
+        return
+    _firebase().reserve_voice_event(event_id=event_id, audio=audio, recorded_at=recorded_at)
+
+
+def mark_voice_error(event_id: str, message: str) -> None:
+    if not _using_firebase():
+        return
+    _firebase().mark_voice_error(event_id, message)
 
 
 def create_manual_event(request: ManualEventRequest) -> IrrigationEventResponse:
+    if _using_firebase():
+        return _firebase().create_manual_event(request)
+    assert engine is not None
+
     products: list[FertigationProduct] = []
     if request.operation_type == "FERTIGATION" and request.product_name:
         products.append(
@@ -103,7 +162,23 @@ def create_voice_event(
     products: list[FertigationProduct],
     transcript: str,
     missing_fields: list[str],
+    audio: AudioObject | None = None,
 ) -> IrrigationEventResponse:
+    if _using_firebase():
+        return _firebase().create_voice_event(
+            event_id=event_id,
+            sector_id=sector_id,
+            operation_type=operation_type,
+            start_date=start_date,
+            start_time=start_time,
+            duration_minutes=duration_minutes,
+            products=products,
+            transcript=transcript,
+            missing_fields=missing_fields,
+            audio=audio,
+        )
+    assert engine is not None
+
     model = IrrigationEventModel(
         id=event_id or str(uuid4()),
         sector_id=sector_id,
@@ -127,6 +202,10 @@ def create_voice_event(
 
 
 def list_events(limit: int = 50) -> list[IrrigationEventResponse]:
+    if _using_firebase():
+        return _firebase().list_events(limit)
+    assert engine is not None
+
     with Session(engine) as session:
         rows = session.scalars(
             select(IrrigationEventModel).order_by(IrrigationEventModel.created_at.desc()).limit(limit)
@@ -135,6 +214,10 @@ def list_events(limit: int = 50) -> list[IrrigationEventResponse]:
 
 
 def count_openai_calls_this_month(now: datetime | None = None) -> int:
+    if _using_firebase():
+        return _firebase().count_openai_calls_this_month(now)
+    assert engine is not None
+
     current = now or datetime.now(UTC)
     if current.tzinfo is None:
         current = current.replace(tzinfo=UTC)
@@ -156,6 +239,17 @@ def record_openai_usage(
     output_tokens: int | None = None,
     total_tokens: int | None = None,
 ) -> None:
+    if _using_firebase():
+        _firebase().record_openai_usage(
+            kind=kind,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )
+        return
+    assert engine is not None
+
     row = OpenAIUsageModel(
         id=str(uuid4()),
         kind=kind,
@@ -171,6 +265,10 @@ def record_openai_usage(
 
 
 def usage_summary() -> dict[str, int | None]:
+    if _using_firebase():
+        return _firebase().usage_summary()
+    assert engine is not None
+
     current = datetime.now(UTC)
     month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     with Session(engine) as session:
@@ -208,5 +306,9 @@ def _response(model: IrrigationEventModel) -> IrrigationEventResponse:
         transcript=model.transcript,
         status=model.status,  # type: ignore[arg-type]
         missing_fields=missing,
+        audio=None,
+        processing=None,
+        schema_version=1,
         created_at=created_at.isoformat(),
+        processed_at=None,
     )
