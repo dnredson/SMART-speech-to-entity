@@ -31,8 +31,9 @@ export interface IrrigationEvent {
 
 export interface LocalVoiceRecord {
   id: string;
-  sectorId: number;
-  operationType: OperationType;
+  quick: boolean;
+  sectorId?: number;
+  operationType?: OperationType;
   blob: Blob;
   mimeType: string;
   createdAt: string;
