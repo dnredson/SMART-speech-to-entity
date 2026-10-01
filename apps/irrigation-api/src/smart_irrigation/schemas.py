@@ -13,6 +13,20 @@ class FertigationProduct(BaseModel):
     solution_liters: float | None = None
 
 
+class AudioObject(BaseModel):
+    storage_path: str
+    bucket: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    original_filename: str | None = None
+
+
+class ProcessingInfo(BaseModel):
+    transcription_model: str | None = None
+    extraction_model: str | None = None
+
+
 class ExtractedProduct(BaseModel):
     name: str | None = Field(default=None, description="Produto ou nutriente exatamente como foi mencionado, sem inventar nomes.")
     kg_per_ha: float | None = Field(default=None, ge=0, description="Dose em kg/ha, se explicitamente informada.")
@@ -47,7 +61,11 @@ class IrrigationEventResponse(BaseModel):
     transcript: str | None = None
     status: RecordStatus
     missing_fields: list[str] = Field(default_factory=list)
+    audio: AudioObject | None = None
+    processing: ProcessingInfo | None = None
+    schema_version: int = 1
     created_at: str
+    processed_at: str | None = None
 
 
 class ExtractionPreviewResponse(BaseModel):
