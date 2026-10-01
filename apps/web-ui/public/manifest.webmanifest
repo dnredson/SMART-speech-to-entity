@@ -1,0 +1,17 @@
+{
+  "name": "SMART Irrigação",
+  "short_name": "SMART",
+  "description": "Registro rápido de irrigação e fertirrigação em campo.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef2eb",
+  "theme_color": "#2f6f5e",
+  "icons": [
+    {
+      "src": "/bot.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
