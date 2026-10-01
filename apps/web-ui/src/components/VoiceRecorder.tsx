@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from "react";
 
 interface VoiceRecorderProps {
   disabled?: boolean;
+  hint?: string;
   onRecorded: (blob: Blob, mimeType: string) => Promise<void>;
 }
 
 const MAX_RECORDING_SECONDS = 120;
 
-export function VoiceRecorder({ disabled = false, onRecorded }: VoiceRecorderProps) {
+export function VoiceRecorder({ disabled = false, hint, onRecorded }: VoiceRecorderProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
@@ -55,9 +56,7 @@ export function VoiceRecorder({ disabled = false, onRecorded }: VoiceRecorderPro
       timerRef.current = window.setInterval(() => {
         setSeconds((value) => {
           const next = value + 1;
-          if (next >= MAX_RECORDING_SECONDS) {
-            window.setTimeout(() => stopRecording(), 0);
-          }
+          if (next >= MAX_RECORDING_SECONDS) window.setTimeout(() => stopRecording(), 0);
           return next;
         });
       }, 1000);
@@ -95,7 +94,7 @@ export function VoiceRecorder({ disabled = false, onRecorded }: VoiceRecorderPro
       <p className="voice-hint">
         {recording
           ? `Gravando ${minutes}:${remaining} · máximo 02:00`
-          : "Diga data, hora de início e duração. Na fertirrigação, inclua produto, kg/ha e litros de solução."}
+          : hint ?? "Diga data, hora de início e duração. Na fertirrigação, inclua produto, kg/ha e litros de solução."}
       </p>
       {error !== null && <p className="form-error">{error}</p>}
     </div>
