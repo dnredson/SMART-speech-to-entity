@@ -13,3 +13,7 @@ data/*.db
 **/.env.local
 !.env.example
 !**/.env.example
+secrets/
+**/secrets/
+**/firebase-service-account.json
+**/*service-account*.json
