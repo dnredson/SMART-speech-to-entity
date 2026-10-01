@@ -26,6 +26,15 @@ class ExtractedEvent(BaseModel):
     products: list[ExtractedProduct] = Field(default_factory=list)
 
 
+class QuickVoiceExtractedEvent(BaseModel):
+    sector_id: int | None = Field(default=None, ge=1, le=7, description="Setor explicitamente mencionado na fala, entre 1 e 7.")
+    operation_type: OperationType | None = Field(default=None, description="IRRIGATION ou FERTIGATION, conforme a operação descrita na fala.")
+    start_date: str | None = Field(default=None, description="Data de início em YYYY-MM-DD.")
+    start_time: str | None = Field(default=None, description="Hora de início em HH:MM, 24 horas.")
+    duration_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+    products: list[ExtractedProduct] = Field(default_factory=list)
+
+
 class IrrigationEventResponse(BaseModel):
     id: str
     sector_id: int
@@ -54,6 +63,18 @@ class ExtractionPreviewResponse(BaseModel):
 
 class VoicePreviewResponse(ExtractionPreviewResponse):
     transcript: str
+
+
+class QuickVoicePreviewResponse(BaseModel):
+    sector_id: int | None
+    operation_type: OperationType | None
+    transcript: str
+    start_date: str | None
+    start_time: str | None
+    duration_minutes: int | None
+    products: list[FertigationProduct] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    complete: bool
 
 
 class ManualEventRequest(BaseModel):
