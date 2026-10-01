@@ -11,8 +11,8 @@ function detailMessage(body: unknown, fallback: string): string {
   return fallback;
 }
 
-export async function listEvents(): Promise<IrrigationEvent[]> {
-  const response = await fetch("/api/v1/events?limit=50");
+export async function listEvents(limit = 200): Promise<IrrigationEvent[]> {
+  const response = await fetch(`/api/v1/events?limit=${limit}`);
   if (!response.ok) {
     throw new Error(`Falha ao carregar histórico (${response.status}).`);
   }
@@ -43,21 +43,30 @@ export async function createManualEvent(input: {
 
 export async function processVoice(input: {
   id: string;
-  sectorId: number;
-  operationType: OperationType;
+  quick: boolean;
+  sectorId?: number;
+  operationType?: OperationType;
   blob: Blob;
   mimeType: string;
   createdAt: string;
 }): Promise<IrrigationEvent> {
   const extension = input.mimeType.includes("ogg") ? "ogg" : input.mimeType.includes("mp4") ? "m4a" : "webm";
   const form = new FormData();
-  form.append("sector_id", String(input.sectorId));
-  form.append("operation_type", input.operationType);
   form.append("recorded_at", input.createdAt);
   form.append("client_record_id", input.id);
   form.append("audio", input.blob, `${input.id}.${extension}`);
 
-  const response = await fetch("/api/v1/voice/process", { method: "POST", body: form });
+  let endpoint = "/api/v1/voice/quick/process";
+  if (!input.quick) {
+    if (input.sectorId === undefined || input.operationType === undefined) {
+      throw new Error("Registro guiado sem setor ou operação.");
+    }
+    form.append("sector_id", String(input.sectorId));
+    form.append("operation_type", input.operationType);
+    endpoint = "/api/v1/voice/process";
+  }
+
+  const response = await fetch(endpoint, { method: "POST", body: form });
   if (!response.ok) {
     const body = await response.json().catch(() => null) as unknown;
     throw new Error(detailMessage(body, `Falha no processamento (${response.status}).`));

@@ -13,6 +13,20 @@ class FertigationProduct(BaseModel):
     solution_liters: float | None = None
 
 
+class AudioObject(BaseModel):
+    storage_path: str
+    bucket: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    original_filename: str | None = None
+
+
+class ProcessingInfo(BaseModel):
+    transcription_model: str | None = None
+    extraction_model: str | None = None
+
+
 class ExtractedProduct(BaseModel):
     name: str | None = Field(default=None, description="Produto ou nutriente exatamente como foi mencionado, sem inventar nomes.")
     kg_per_ha: float | None = Field(default=None, ge=0, description="Dose em kg/ha, se explicitamente informada.")
@@ -20,6 +34,15 @@ class ExtractedProduct(BaseModel):
 
 
 class ExtractedEvent(BaseModel):
+    start_date: str | None = Field(default=None, description="Data de início em YYYY-MM-DD.")
+    start_time: str | None = Field(default=None, description="Hora de início em HH:MM, 24 horas.")
+    duration_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
+    products: list[ExtractedProduct] = Field(default_factory=list)
+
+
+class QuickVoiceExtractedEvent(BaseModel):
+    sector_id: int | None = Field(default=None, ge=1, le=7, description="Setor explicitamente mencionado na fala, entre 1 e 7.")
+    operation_type: OperationType | None = Field(default=None, description="IRRIGATION ou FERTIGATION, conforme a operação descrita na fala.")
     start_date: str | None = Field(default=None, description="Data de início em YYYY-MM-DD.")
     start_time: str | None = Field(default=None, description="Hora de início em HH:MM, 24 horas.")
     duration_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
@@ -38,7 +61,11 @@ class IrrigationEventResponse(BaseModel):
     transcript: str | None = None
     status: RecordStatus
     missing_fields: list[str] = Field(default_factory=list)
+    audio: AudioObject | None = None
+    processing: ProcessingInfo | None = None
+    schema_version: int = 1
     created_at: str
+    processed_at: str | None = None
 
 
 class ExtractionPreviewResponse(BaseModel):
@@ -54,6 +81,18 @@ class ExtractionPreviewResponse(BaseModel):
 
 class VoicePreviewResponse(ExtractionPreviewResponse):
     transcript: str
+
+
+class QuickVoicePreviewResponse(BaseModel):
+    sector_id: int | None
+    operation_type: OperationType | None
+    transcript: str
+    start_date: str | None
+    start_time: str | None
+    duration_minutes: int | None
+    products: list[FertigationProduct] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
+    complete: bool
 
 
 class ManualEventRequest(BaseModel):

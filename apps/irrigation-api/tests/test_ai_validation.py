@@ -1,5 +1,5 @@
-from smart_irrigation.schemas import ExtractedEvent, ExtractedProduct
-from smart_irrigation.validation import validate_extracted
+from smart_irrigation.schemas import ExtractedEvent, ExtractedProduct, QuickVoiceExtractedEvent
+from smart_irrigation.validation import validate_extracted, validate_quick_voice
 
 
 def test_irrigation_does_not_require_product() -> None:
@@ -53,3 +53,39 @@ def test_fertigation_multiple_products_complete() -> None:
     assert parsed.complete is True
     assert parsed.missing_fields == []
     assert len(parsed.products) == 2
+
+
+def test_quick_voice_can_supply_sector_and_operation() -> None:
+    parsed = validate_quick_voice(
+        QuickVoiceExtractedEvent(
+            sector_id=7,
+            operation_type="IRRIGATION",
+            start_date="2026-09-30",
+            start_time="21:00",
+            duration_minutes=120,
+            products=[],
+        ),
+        "Hoje irriguei o setor 7 às 21 horas durante duas horas.",
+    )
+
+    assert parsed.complete is True
+    assert parsed.sector_id == 7
+    assert parsed.operation_type == "IRRIGATION"
+    assert parsed.missing_fields == []
+
+
+def test_quick_voice_requires_sector_when_not_spoken() -> None:
+    parsed = validate_quick_voice(
+        QuickVoiceExtractedEvent(
+            sector_id=None,
+            operation_type="IRRIGATION",
+            start_date="2026-09-30",
+            start_time="21:00",
+            duration_minutes=120,
+            products=[],
+        ),
+        "Hoje irriguei às 21 horas durante duas horas.",
+    )
+
+    assert parsed.complete is False
+    assert "sector_id" in parsed.missing_fields

@@ -1,0 +1,169 @@
+.topbar-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+.app-nav {
+  position: sticky;
+  top: 4.8rem;
+  z-index: 19;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--sc-border);
+  background: rgba(238, 242, 235, 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.app-nav button {
+  min-height: 2.65rem;
+  border: 0;
+  border-radius: var(--sc-radius-md);
+  color: var(--sc-muted);
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.app-nav button.active {
+  color: var(--sc-on-brand);
+  background: var(--sc-brand);
+}
+
+.compact-hero { padding-bottom: 0.35rem; }
+
+.quick-voice-card {
+  position: relative;
+  margin-top: 0.35rem;
+  padding: 1.05rem;
+  border: 1px solid color-mix(in srgb, var(--sc-brand) 35%, var(--sc-border));
+  border-radius: var(--sc-radius);
+  background: linear-gradient(180deg, #ffffff 0%, #f5faf7 100%);
+  box-shadow: var(--sc-shadow);
+}
+
+.quick-voice-card h2 { margin: 0.2rem 0 0; font-size: 1.08rem; }
+.quick-example { margin: 0.45rem 0 0; color: var(--sc-muted); font-size: 0.8rem; }
+.quick-badge {
+  display: inline-flex;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--sc-radius-pill);
+  color: var(--sc-success-ink);
+  background: var(--sc-success-bg);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.guided-toggle { margin-top: 0.85rem; color: var(--sc-brand); background: transparent; border-style: dashed; }
+.guided-flow { margin-top: 0.4rem; }
+
+.text-button {
+  border: 0;
+  color: var(--sc-brand);
+  background: transparent;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.compact-history { margin-top: 1.2rem; }
+
+.sector-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.sector-summary-card {
+  display: grid;
+  gap: 0.12rem;
+  min-height: 5.3rem;
+  padding: 0.75rem;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+  color: var(--sc-ink);
+  background: var(--sc-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sector-summary-card > span { color: var(--sc-brand); font-size: 0.72rem; font-weight: 800; }
+.sector-summary-card strong { font-size: 0.88rem; }
+.sector-summary-card small { color: var(--sc-muted); font-size: 0.72rem; }
+.sector-summary-card.selected { border-color: var(--sc-brand); background: var(--sc-brand-soft); }
+
+.history-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+}
+
+.field select {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.62rem 0.75rem;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  color: var(--sc-ink);
+  background: var(--sc-surface);
+}
+
+.history-total { margin-top: 0.3rem; }
+.pending-panel { border-color: var(--sc-warning-border); background: var(--sc-warning-bg); }
+.full-history { margin-top: 0.8rem; }
+
+.pending-history-item { align-items: flex-start; }
+
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.queue-action {
+  min-height: 2.1rem;
+  padding: 0.38rem 0.72rem;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-surface);
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.queue-action.retry {
+  border-color: color-mix(in srgb, var(--sc-brand) 45%, var(--sc-border));
+  color: var(--sc-brand);
+}
+
+.queue-action.discard {
+  border-color: var(--sc-danger-border);
+  color: var(--sc-danger-ink);
+  background: var(--sc-danger-bg);
+}
+
+.queue-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.queue-offline-note {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--sc-muted);
+}
+
+@media (min-width: 620px) {
+  .sector-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .history-filters { grid-template-columns: 1fr; }
+  .app-nav { top: 4.6rem; }
+  .queue-actions { flex-direction: column; align-items: stretch; }
+}

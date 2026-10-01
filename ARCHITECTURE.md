@@ -1,17 +1,17 @@
-# SMART Irrigação V0.3 — arquitetura
+# SMART Irrigação V0.5 — arquitetura
 
 ## Objetivo
 
-Entregar rapidamente ao agrônomo um registrador web/PWA de irrigação e fertirrigação compatível com a identidade e a stack do portal SMART.
+Entregar ao agrônomo um registrador web/PWA de irrigação e fertirrigação com o menor atrito possível, preservando rastreabilidade do dado original.
 
-## Fluxo
+## Fluxo principal
 
 ```text
 React / TypeScript / Vite PWA
            │
-           ├── operação selecionada explicitamente
-           ├── setor 1–7 selecionado explicitamente
-           ├── formulário manual
+           ├── registro rápido por voz
+           │     └── setor + operação também podem vir da fala
+           ├── fluxo guiado opcional
            └── MediaRecorder
                     │
                     ▼
@@ -21,12 +21,23 @@ React / TypeScript / Vite PWA
                     ▼
                   FastAPI
                     │
-       ┌────────────┴────────────┐
-       │                         │
- gpt-transcribe             gpt-6-luna
- áudio → texto          Structured Outputs
-       │                         │
-       └──────── transcrição ────┘
+          gera/recebe event_id
+                    │
+        ┌───────────┴───────────┐
+        │                       │
+        ▼                       ▼
+Firebase Storage          Firestore PROCESSING
+áudio original + SHA-256       │
+        │                       │
+        └───────────┬───────────┘
+                    ▼
+             gpt-transcribe
+                    │
+                    ▼
+                transcript
+                    │
+                    ▼
+      gpt-6-luna / Structured Output
                     │
                     ▼
              Pydantic + SMART
@@ -38,27 +49,27 @@ React / TypeScript / Vite PWA
        │                         │
        └────────────┬────────────┘
                     ▼
-                  SQLite
+                Firestore
 ```
+
+Se STT ou extração falharem depois do upload, o áudio original permanece no Storage e o documento de processamento pode ser auditado.
 
 ## Separação de autoridade
 
-### Interface/usuário
+### Usuário/interface
 
-É autoridade para:
+No fluxo guiado, setor e operação vêm da seleção explícita.
 
-- `sector_id`;
-- `operation_type`.
-
-Esses campos não são inferidos da fala.
+No fluxo rápido, a fala pode conter `sector_id` e `operation_type`. A IA só propõe esses valores quando estiverem claros; caso contrário retorna `null`.
 
 ### OpenAI
 
 É usada para:
 
 - transcrever áudio;
-- interpretar data, hora, duração e produtos presentes na transcrição;
-- produzir uma saída compatível com o schema estruturado.
+- interpretar setor/operação no modo rápido;
+- interpretar data, hora, duração e produtos;
+- produzir saída compatível com schema estruturado.
 
 Não decide se o registro está completo.
 
@@ -69,34 +80,85 @@ Não decide se o registro está completo.
 - validar setor 1–7;
 - validar data/hora/duração;
 - exigir campos conforme o tipo da operação;
-- exigir nome/kg-ha/litros para cada produto em fertirrigação;
+- exigir nome/kg-ha/litros para cada produto de fertirrigação;
 - construir `missing_fields`;
-- definir `complete` e `REGISTERED/NEEDS_REVIEW`.
+- definir `complete` e status final.
+
+## Persistência
+
+### Firestore
+
+Coleções oficiais:
+
+```text
+irrigation_events
+openai_usage
+```
+
+`irrigation_events` contém evento estruturado, transcrição, referência ao áudio, status e metadados de processamento.
+
+### Firebase Storage
+
+Bucket:
+
+```text
+smart-app-b807a.firebasestorage.app
+```
+
+Estrutura:
+
+```text
+irrigation-audio/YYYY/MM/<event-id>/original.<ext>
+```
+
+O áudio é preservado em formato original e recebe SHA-256.
+
+### IndexedDB
+
+É somente fila offline do navegador. Depois de sincronizado e confirmado pelo backend, o item local é removido.
+
+### SQLite
+
+Continua disponível apenas como fallback explícito:
+
+```env
+PERSISTENCE_PROVIDER=sqlite
+```
 
 ## Preview e persistência
 
 ```text
-/transcript/preview   texto → entidade        sem persistir
-/voice/preview        áudio → texto → entidade sem persistir
-/transcript/process   texto → entidade        persiste
-/voice/process        áudio → texto → entidade persiste
-```
+/transcript/preview       sem persistência
+/voice/preview            sem persistência
+/voice/quick/preview      sem persistência
 
-Os endpoints de preview são próprios para desenvolvimento e validação.
+/transcript/process       persiste entidade
+/voice/process            persiste áudio + entidade
+/voice/quick/process      persiste áudio + entidade
+```
 
 ## Datas relativas e fuso horário
 
 O frontend envia `recorded_at` com offset local, por exemplo:
 
 ```text
-2026-09-30T20:30:00-03:00
+2026-10-01T07:30:00-03:00
 ```
 
-Isso evita transformar "hoje" em amanhã quando a gravação ocorre à noite no Brasil e o JavaScript converte a data para UTC.
+Isso ancora expressões como "hoje", "ontem" e "anteontem" no horário real do usuário.
 
-## Offline-first
+## Auditoria
 
-O áudio é gravado e persistido no IndexedDB antes do envio. A falta de internet não impede o registro em campo; a sincronização acontece posteriormente.
+Para cada registro por voz são preservados, quando disponíveis:
+
+- áudio original;
+- SHA-256 do áudio;
+- transcrição;
+- entidade extraída;
+- modelo de transcrição;
+- modelo de extração;
+- timestamps de criação/processamento;
+- status e campos faltantes.
 
 ## Limites
 
@@ -108,10 +170,10 @@ O áudio é gravado e persistido no IndexedDB antes do envio. A falta de interne
 
 ## Evolução prevista
 
-- revisão assistida somente dos campos faltantes;
+- tela de revisão dos campos faltantes;
 - catálogo real de nutrientes/produtos;
 - metadados dos 7 setores;
-- PostgreSQL na integração ao portal;
-- autenticação e roles do portal;
+- autenticação/roles do portal SMART;
 - vazão nominal e medida;
+- cálculo de volume e lâmina no backend determinístico;
 - correlação temporal com sensores de solo e fluxo.
