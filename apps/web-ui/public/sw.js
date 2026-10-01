@@ -1,4 +1,4 @@
-const CACHE_NAME = "smart-irrigacao-v01";
+const CACHE_NAME = "smart-irrigacao-v05";
 const APP_SHELL = ["/", "/index.html", "/bot.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
