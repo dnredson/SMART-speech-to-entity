@@ -8,17 +8,31 @@ from typing import Annotated
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from .ai import AILimitError, AIUnavailableError, ensure_openai_capacity, extract_with_openai
+from .ai import (
+    AILimitError,
+    AIUnavailableError,
+    ensure_openai_capacity,
+    extract_quick_voice_with_openai,
+    extract_with_openai,
+)
 from .config import get_settings
 from .database import create_manual_event, create_voice_event, list_events, usage_summary
-from .schemas import ExtractionPreviewResponse, IrrigationEventResponse, ManualEventRequest, OperationType, TranscriptProcessRequest, VoicePreviewResponse
+from .schemas import (
+    ExtractionPreviewResponse,
+    IrrigationEventResponse,
+    ManualEventRequest,
+    OperationType,
+    QuickVoicePreviewResponse,
+    TranscriptProcessRequest,
+    VoicePreviewResponse,
+)
 from .speech import SpeechUnavailableError, transcribe_audio
 
 settings = get_settings()
 
 app = FastAPI(
     title="SMART Irrigação API",
-    version="0.3.0",
+    version="0.4.0",
     description="Serviço independente para registro de irrigação/fertirrigação e speech-to-entity.",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -46,7 +60,7 @@ def health() -> dict[str, object]:
     return {
         "status": "ok",
         "service": "smart-irrigation-api",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "openai_configured": settings.openai_configured,
         "entity_extractor": settings.entity_extractor,
         "stt_provider": settings.stt_provider,
@@ -70,8 +84,8 @@ def sectors() -> list[dict[str, int | str]]:
 
 
 @app.get("/api/v1/events", response_model=list[IrrigationEventResponse])
-def events(limit: int = 50) -> list[IrrigationEventResponse]:
-    return list_events(max(1, min(limit, 200)))
+def events(limit: int = 200) -> list[IrrigationEventResponse]:
+    return list_events(max(1, min(limit, 500)))
 
 
 @app.post("/api/v1/events", response_model=IrrigationEventResponse, status_code=201)
@@ -146,29 +160,16 @@ def process_transcript(request: TranscriptProcessRequest) -> IrrigationEventResp
     )
 
 
-@app.post("/api/v1/voice/preview", response_model=VoicePreviewResponse)
-async def preview_voice(
-    sector_id: Annotated[int, Form(ge=1, le=7)],
-    operation_type: Annotated[OperationType, Form()],
-    recorded_at: Annotated[str, Form()],
-    audio: Annotated[UploadFile, File()],
-) -> VoicePreviewResponse:
-    """Transcreve e extrai entidades sem gravar o evento no banco."""
+async def _transcribe_upload(audio: UploadFile) -> str:
     content = await audio.read()
     if not content:
         raise HTTPException(status_code=422, detail="Áudio vazio.")
     if len(content) > settings.max_audio_bytes:
         raise HTTPException(status_code=413, detail="Áudio excede o limite local de tamanho.")
 
-    try:
-        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
-            ensure_openai_capacity(2)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-
     suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
     try:
-        transcript = transcribe_audio(content, suffix=suffix, filename=audio.filename)
+        return transcribe_audio(content, suffix=suffix, filename=audio.filename)
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
@@ -178,13 +179,31 @@ async def preview_voice(
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"Falha ao transcrever áudio: {exc}") from exc
 
-    try:
-        reference = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-    except ValueError:
-        reference = datetime.now().astimezone()
 
+def _reference_time(recorded_at: str) -> datetime:
     try:
-        parsed = extract_with_openai(transcript, operation_type, reference)
+        return datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now().astimezone()
+
+
+@app.post("/api/v1/voice/preview", response_model=VoicePreviewResponse)
+async def preview_voice(
+    sector_id: Annotated[int, Form(ge=1, le=7)],
+    operation_type: Annotated[OperationType, Form()],
+    recorded_at: Annotated[str, Form()],
+    audio: Annotated[UploadFile, File()],
+) -> VoicePreviewResponse:
+    """Fluxo guiado: setor e operação já foram selecionados pela interface."""
+    try:
+        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
+            ensure_openai_capacity(2)
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    transcript = await _transcribe_upload(audio)
+    try:
+        parsed = extract_with_openai(transcript, operation_type, _reference_time(recorded_at))
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
@@ -211,38 +230,16 @@ async def process_voice(
     audio: Annotated[UploadFile, File()],
     client_record_id: Annotated[str | None, Form()] = None,
 ) -> IrrigationEventResponse:
-    content = await audio.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="Áudio vazio.")
-    if len(content) > settings.max_audio_bytes:
-        raise HTTPException(status_code=413, detail="Áudio excede o limite local de tamanho.")
-
-    # Voz com OpenAI usa 2 chamadas: transcrição + extração semântica.
+    """Fluxo guiado: setor e operação já foram selecionados pela interface."""
     try:
         if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
             ensure_openai_capacity(2)
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
-    suffix = Path(audio.filename or "recording.webm").suffix or ".webm"
+    transcript = await _transcribe_upload(audio)
     try:
-        transcript = transcribe_audio(content, suffix=suffix, filename=audio.filename)
-    except AILimitError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except AIUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except SpeechUnavailableError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"Falha ao transcrever áudio: {exc}") from exc
-
-    try:
-        reference = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-    except ValueError:
-        reference = datetime.now().astimezone()
-
-    try:
-        parsed = extract_with_openai(transcript, operation_type, reference)
+        parsed = extract_with_openai(transcript, operation_type, _reference_time(recorded_at))
     except AILimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AIUnavailableError as exc:
@@ -258,6 +255,74 @@ async def process_voice(
         products=parsed.products,
         transcript=transcript,
         missing_fields=parsed.missing_fields,
+    )
+
+
+@app.post("/api/v1/voice/quick/preview", response_model=QuickVoicePreviewResponse)
+async def preview_quick_voice(
+    recorded_at: Annotated[str, Form()],
+    audio: Annotated[UploadFile, File()],
+) -> QuickVoicePreviewResponse:
+    """Fluxo de menor atrito: setor e tipo da operação também são extraídos da fala."""
+    try:
+        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
+            ensure_openai_capacity(2)
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    transcript = await _transcribe_upload(audio)
+    try:
+        return extract_quick_voice_with_openai(transcript, _reference_time(recorded_at))
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except AIUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/voice/quick/process", response_model=IrrigationEventResponse, status_code=201)
+async def process_quick_voice(
+    recorded_at: Annotated[str, Form()],
+    audio: Annotated[UploadFile, File()],
+    client_record_id: Annotated[str | None, Form()] = None,
+) -> IrrigationEventResponse:
+    """Registra por uma única fala. Só exige correção manual se setor ou operação não forem identificados."""
+    try:
+        if settings.stt_provider == "openai" and settings.entity_extractor == "openai":
+            ensure_openai_capacity(2)
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    transcript = await _transcribe_upload(audio)
+    try:
+        parsed = extract_quick_voice_with_openai(transcript, _reference_time(recorded_at))
+    except AILimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except AIUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if parsed.sector_id is None or parsed.operation_type is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Não consegui identificar setor e/ou tipo da operação.",
+                "missing_fields": parsed.missing_fields,
+                "transcript": transcript,
+            },
+        )
+
+    remaining_missing = [
+        item for item in parsed.missing_fields if item not in {"sector_id", "operation_type"}
+    ]
+    return create_voice_event(
+        event_id=client_record_id,
+        sector_id=parsed.sector_id,
+        operation_type=parsed.operation_type,
+        start_date=parsed.start_date,
+        start_time=parsed.start_time,
+        duration_minutes=parsed.duration_minutes,
+        products=parsed.products,
+        transcript=transcript,
+        missing_fields=remaining_missing,
     )
 
 
